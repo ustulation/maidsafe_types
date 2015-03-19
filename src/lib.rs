@@ -262,9 +262,19 @@ fn Serialisation_AnMaid() {
 
 //######################  PublicAnMaid ##########################################
 struct PublicAnMaid {
-public_keys: (crypto::sign::PublicKey, crypto::asymmetricbox::PublicKey), 
-signature: crypto::sign::Signature,
-name: NameType,
+  public_keys: (crypto::sign::PublicKey, crypto::asymmetricbox::PublicKey),
+  signature: crypto::sign::Signature,
+  name: NameType,
+}
+
+
+#[test]
+fn serialisation_public_anmaid() {
+  let (pub_sign_key, sec_sign_key) = crypto::sign::gen_keypair();
+  let (pub_asym_key, sec_asym_key) = crypto::asymmetricbox::gen_keypair();
+
+  let obj_before = PublicAnMaid {
+  };
 }
 
 //###################### AnMpid ##########################################
