@@ -1,32 +1,28 @@
-/*  Copyright 2014 MaidSafe.net limited
-
-    This MaidSafe Software is licensed to you under (1) the MaidSafe.net Commercial License,
-    version 1.0 or later, or (2) The General Public License (GPL), version 3, depending on which
-    licence you accepted on initial access to the Software (the "Licences").
-
-    By contributing code to the MaidSafe Software, or to this project generally, you agree to be
-    bound by the terms of the MaidSafe Contributor Agreement, version 1.0, found in the root
-    directory of this project at LICENSE, COPYING and CONTRIBUTOR respectively and also
-    available at: http://www.maidsafe.net/licenses
-
-    Unless required by applicable law or agreed to in writing, the MaidSafe Software distributed
-    under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS
-    OF ANY KIND, either express or implied.
-
-    See the Licences for the specific language governing permissions and limitations relating to
-    use of the MaidSafe Software.                                                                 */
-
-extern crate rustc_serialize;
-extern crate sodiumoxide;
-extern crate cbor;
-extern crate rand;
+// Copyright 2015 MaidSafe.net limited
+//
+// This MaidSafe Software is licensed to you under (1) the MaidSafe.net Commercial License, version
+// 1.0 or later, or (2) The General Public License (GPL), version 3, depending on which licence you
+// accepted on initial access to the Software (the "Licences").
+//
+// By contributing code to the MaidSafe Software, or to this project generally, you agree to be
+// bound by the terms of the MaidSafe Contributor Agreement, version 1.0, found in the root
+// directory of this project at LICENSE, COPYING and CONTRIBUTOR respectively and also available at
+// http://maidsafe.net/licenses
+//
+// Unless required by applicable law or agreed to in writing, the MaidSafe Software distributed
+// under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.
+//
+// See the Licences for the specific language governing permissions and limitations relating to use
+// of the MaidSafe Software.
 
 use cbor::CborTagEncode;
+use cbor;
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use sodiumoxide::crypto;
 use helper::*;
-use common::NameType;
-use traits::RoutingTrait;
+use routing::name_type::NameType;
+use routing::message_interface::MessageInterface;
 use Random;
 use std::fmt;
 
@@ -36,12 +32,13 @@ use std::fmt;
 /// ```
 /// extern crate sodiumoxide;
 /// extern crate maidsafe_types;
+/// extern crate routing;
 ///
 /// // Generating publick and secret keys using sodiumoxide
 /// let (pub_sign_key, sec_sign_key) = sodiumoxide::crypto::sign::gen_keypair();
 /// let (pub_asym_key, sec_asym_key) = sodiumoxide::crypto::asymmetricbox::gen_keypair();
 /// // Create AnMpid
-/// let an_mpid = maidsafe_types::AnMpid::new((pub_sign_key, pub_asym_key), (sec_sign_key, sec_asym_key), maidsafe_types::NameType([3u8; 64]));
+/// let an_mpid = maidsafe_types::AnMpid::new((pub_sign_key, pub_asym_key), (sec_sign_key, sec_asym_key), routing::name_type::NameType([3u8; 64]));
 /// // Retrieving the values
 /// let ref publicKeys = an_mpid.get_public_keys();
 /// let ref secret_keys = an_mpid.get_secret_keys();
@@ -55,7 +52,7 @@ pub struct AnMpid {
 	name: NameType,
 }
 
-impl RoutingTrait for AnMpid {
+impl MessageInterface for AnMpid {
     fn get_name(&self) -> NameType {
         let sign_arr = &(&self.public_keys.0).0;
         let asym_arr = &(&self.public_keys.1).0;
@@ -75,7 +72,7 @@ impl RoutingTrait for AnMpid {
     }
 
     fn get_owner(&self) -> Option<Vec<u8>> {
-        Some(array_as_vector(&self.name.0))
+        Some(self.name.0.as_ref().to_vec())
     }
 
     fn get_type_id(&self) -> Option<u64> {
@@ -85,23 +82,24 @@ impl RoutingTrait for AnMpid {
 
 impl fmt::Debug for AnMpid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "AnMpid {{ public_keys:({:?}, {:?}), secret_keys:({:?}, {:?}), name: {:?} }}", self.public_keys.0 .0.to_vec(), self.public_keys.1 .0.to_vec(), 
+        write!(f, "AnMpid {{ public_keys:({:?}, {:?}), secret_keys:({:?}, {:?}), name: {:?} }}", self.public_keys.0 .0.to_vec(), self.public_keys.1 .0.to_vec(),
         	self.secret_keys.0 .0.to_vec(), self.secret_keys.1 .0.to_vec(), self.name)
     }
 }
 
 impl PartialEq for AnMpid {
-	fn eq(&self, other: &AnMpid) -> bool {
-		self.public_keys.0 .0.iter().chain(self.public_keys.1 .0.iter().chain(self.secret_keys.0 .0.iter().chain(self.secret_keys.1 .0.iter()))).zip(
-            other.public_keys.0 .0.iter().chain(other.public_keys.1 .0.iter().chain(other.secret_keys.0 .0.iter().chain(other.secret_keys.1 .0.iter())))).all(|a| a.0 == a.1) &&
-            self.name == other.name	
-	}
+    fn eq(&self, other: &AnMpid) -> bool {
+        // secret keys are mathematically linked, just check public ones
+        let pub1_equal = slice_equal(&self.public_keys.0 .0, &other.public_keys.0 .0);
+        let pub2_equal = slice_equal(&self.public_keys.1 .0, &other.public_keys.1 .0);
+        return pub1_equal && pub2_equal && self.name == other.name;
+    }
 }
 
 impl Random for AnMpid {
 	fn generate_random() -> AnMpid {
         let (sign_pub_key, sign_sec_key) = crypto::sign::gen_keypair();
-        let (asym_pub_key, asym_sec_key) = crypto::asymmetricbox::gen_keypair();        
+        let (asym_pub_key, asym_sec_key) = crypto::asymmetricbox::gen_keypair();
 		AnMpid {
 			public_keys: (sign_pub_key, asym_pub_key),
 			secret_keys: (sign_sec_key, asym_sec_key),
@@ -132,30 +130,41 @@ impl AnMpid {
 }
 
 impl Encodable for AnMpid {
-	fn encode<E: Encoder>(&self, e: &mut E)->Result<(), E::Error> {
-		let (crypto::sign::PublicKey(pub_sign_vec), crypto::asymmetricbox::PublicKey(pub_asym_vec)) = self.public_keys;
-		let (crypto::sign::SecretKey(sec_sign_vec), crypto::asymmetricbox::SecretKey(sec_asym_vec)) = self.secret_keys;
+    fn encode<E: Encoder>(&self, e: &mut E)->Result<(), E::Error> {
+	let (crypto::sign::PublicKey(pub_sign_vec), crypto::asymmetricbox::PublicKey(pub_asym_vec)) = self.public_keys;
+	let (crypto::sign::SecretKey(sec_sign_vec), crypto::asymmetricbox::SecretKey(sec_asym_vec)) = self.secret_keys;
 
-		CborTagEncode::new(5483_001, &(
-			array_as_vector(&pub_sign_vec),
-			array_as_vector(&pub_asym_vec),
-			array_as_vector(&sec_sign_vec),
-			array_as_vector(&sec_asym_vec),
-			&self.name)).encode(e)
-	}
+	CborTagEncode::new(5483_001, &(
+	    pub_sign_vec.as_ref(),
+	    pub_asym_vec.as_ref(),
+	    sec_sign_vec.as_ref(),
+	    sec_asym_vec.as_ref(),
+	    &self.name)).encode(e)
+    }
 }
 
 impl Decodable for AnMpid {
-	fn decode<D: Decoder>(d: &mut D)-> Result<AnMpid, D::Error> {
-		try!(d.read_u64());
-		let(pub_sign_vec, pub_asym_vec, sec_sign_vec, sec_asym_vec, name) = try!(Decodable::decode(d));
-		let pub_keys = (crypto::sign::PublicKey(vector_as_u8_32_array(pub_sign_vec)),
-				crypto::asymmetricbox::PublicKey(vector_as_u8_32_array(pub_asym_vec)));
-		let sec_keys = (crypto::sign::SecretKey(vector_as_u8_64_array(sec_sign_vec)),
-				crypto::asymmetricbox::SecretKey(vector_as_u8_32_array(sec_asym_vec)));
-		Ok(AnMpid::new(pub_keys, sec_keys, name))
-	}
+    fn decode<D: Decoder>(d: &mut D)-> Result<AnMpid, D::Error> {
+	try!(d.read_u64());
+	let (pub_sign_vec, pub_asym_vec, sec_sign_vec, sec_asym_vec, name) : (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, NameType) = try!(Decodable::decode(d));
+
+        let pub_sign_arr = convert_to_array!(pub_sign_vec, crypto::sign::PUBLICKEYBYTES);
+        let pub_asym_arr = convert_to_array!(pub_asym_vec, crypto::asymmetricbox::PUBLICKEYBYTES);
+        let sec_sign_arr = convert_to_array!(sec_sign_vec, crypto::sign::SECRETKEYBYTES);
+        let sec_asym_arr = convert_to_array!(sec_asym_vec, crypto::asymmetricbox::SECRETKEYBYTES);
+
+        if pub_sign_arr.is_none() || pub_asym_arr.is_none() || sec_sign_arr.is_none() || sec_asym_arr.is_none() {
+            return Err(d.error("Bad AnMpid size"));
+        }
+
+	let pub_keys = (crypto::sign::PublicKey(pub_sign_arr.unwrap()),
+			crypto::asymmetricbox::PublicKey(pub_asym_arr.unwrap()));
+	let sec_keys = (crypto::sign::SecretKey(sec_sign_arr.unwrap()),
+			crypto::asymmetricbox::SecretKey(sec_asym_arr.unwrap()));
+	Ok(AnMpid::new(pub_keys, sec_keys, name))
+    }
 }
+
 
 #[test]
 fn serialisation_an_mpid() {
@@ -169,8 +178,8 @@ fn serialisation_an_mpid() {
 	assert_eq!(obj_before, obj_after);
 }
 
-#[test] 
-fn equality_assertion_an_mpid() {	
+#[test]
+fn equality_assertion_an_mpid() {
 	let an_maid_first = AnMpid::generate_random();
 	let an_maid_second = an_maid_first.clone();
 	let an_maid_third = AnMpid::generate_random();

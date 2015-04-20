@@ -1,34 +1,32 @@
-/*  Copyright 2014 MaidSafe.net limited
-
-    This MaidSafe Software is licensed to you under (1) the MaidSafe.net Commercial License,
-    version 1.0 or later, or (2) The General Public License (GPL), version 3, depending on which
-    licence you accepted on initial access to the Software (the "Licences").
-
-    By contributing code to the MaidSafe Software, or to this project generally, you agree to be
-    bound by the terms of the MaidSafe Contributor Agreement, version 1.0, found in the root
-    directory of this project at LICENSE, COPYING and CONTRIBUTOR respectively and also
-    available at: http://www.maidsafe.net/licenses
-
-    Unless required by applicable law or agreed to in writing, the MaidSafe Software distributed
-    under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS
-    OF ANY KIND, either express or implied.
-
-    See the Licences for the specific language governing permissions and limitations relating to
-    use of the MaidSafe Software.                                                                 */
-extern crate rustc_serialize;
-extern crate sodiumoxide;
-extern crate cbor;
-extern crate rand;
+// Copyright 2015 MaidSafe.net limited
+//
+// This MaidSafe Software is licensed to you under (1) the MaidSafe.net Commercial License, version
+// 1.0 or later, or (2) The General Public License (GPL), version 3, depending on which licence you
+// accepted on initial access to the Software (the "Licences").
+//
+// By contributing code to the MaidSafe Software, or to this project generally, you agree to be
+// bound by the terms of the MaidSafe Contributor Agreement, version 1.0, found in the root
+// directory of this project at LICENSE, COPYING and CONTRIBUTOR respectively and also available at
+// http://maidsafe.net/licenses
+//
+// Unless required by applicable law or agreed to in writing, the MaidSafe Software distributed
+// under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.
+//
+// See the Licences for the specific language governing permissions and limitations relating to use
+// of the MaidSafe Software.
 
 use cbor::CborTagEncode;
+use cbor;
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use sodiumoxide::crypto;
 use helper::*;
-use common::NameType;
-use traits::RoutingTrait;
+use routing::name_type::NameType;
+use routing::message_interface::MessageInterface;
 use std::fmt;
 use Random;
 use std::mem;
+use rand;
 
 /// PublicMaid
 ///
@@ -37,6 +35,7 @@ use std::mem;
 /// ```
 /// extern crate sodiumoxide;
 /// extern crate maidsafe_types;
+/// extern crate routing;
 ///
 /// // Generating sign and asymmetricbox keypairs,
 /// let (pub_sign_key, _) = sodiumoxide::crypto::sign::gen_keypair(); // returns (PublicKey, SecretKey)
@@ -45,9 +44,9 @@ use std::mem;
 /// // Creating new PublicMaid
 /// let public_maid  = maidsafe_types::PublicMaid::new((pub_sign_key, pub_asym_key),
 ///                     sodiumoxide::crypto::sign::Signature([2u8; 64]),
-///                     maidsafe_types::NameType([8u8; 64]),
+///                     routing::name_type::NameType([8u8; 64]),
 ///                     sodiumoxide::crypto::sign::Signature([5u8; 64]),
-///                     maidsafe_types::NameType([6u8; 64]));
+///                     routing::name_type::NameType([6u8; 64]));
 ///
 /// // getting PublicMaid::public_keys
 /// let &(pub_sign, pub_asym) = public_maid.get_public_keys();
@@ -56,13 +55,13 @@ use std::mem;
 /// let maid_signature: &sodiumoxide::crypto::sign::Signature = public_maid.get_maid_signature();
 ///
 /// // getting PublicMaid::owner
-/// let owner: &maidsafe_types::NameType = public_maid.get_owner();
+/// let owner: &routing::name_type::NameType = public_maid.get_owner();
 ///
 /// // getting PublicMaid::signature
 /// let signature: &sodiumoxide::crypto::sign::Signature = public_maid.get_signature();
 ///
 /// // getting PublicMaid::name
-/// let name: &maidsafe_types::NameType = public_maid.get_name();
+/// let name: &routing::name_type::NameType = public_maid.get_name();
 /// ```
 
 #[derive(Clone)]
@@ -74,7 +73,7 @@ pub struct PublicMaid {
 	name: NameType
 }
 
-impl RoutingTrait for PublicMaid {
+impl MessageInterface for PublicMaid {
     fn get_name(&self) -> NameType {
         let sign_arr = &(&self.public_keys.0).0;
         let asym_arr = &(&self.public_keys.1).0;
@@ -94,21 +93,23 @@ impl RoutingTrait for PublicMaid {
     }
 
     fn get_owner(&self) -> Option<Vec<u8>> {
-        Some(array_as_vector(&self.owner.0))
+        Some(self.owner.0.as_ref().to_vec())
     }
 }
 
 impl PartialEq for PublicMaid {
-	fn eq(&self, other: &PublicMaid) -> bool {
-        self.public_keys.0 .0.iter().chain(self.public_keys.1 .0.iter().chain(self.maid_signature.0 .iter().chain(self.signature.0 .iter()))).zip(
-            other.public_keys.0 .0.iter().chain(other.public_keys.1 .0.iter().chain(other.maid_signature.0 .iter().chain(other.signature.0 .iter())))).all(|a| a.0 == a.1) &&
-            self.name == other.name
+    fn eq(&self, other: &PublicMaid) -> bool {
+        let pub1_equal = slice_equal(&self.public_keys.0 .0, &other.public_keys.0 .0);
+        let pub2_equal = slice_equal(&self.public_keys.1 .0, &other.public_keys.1 .0);
+        let sig1_equal = slice_equal(&self.maid_signature.0, &other.maid_signature.0);
+        let sig2_equal = slice_equal(&self.signature.0, &other.signature.0);
+        return pub1_equal && pub2_equal && sig1_equal && sig2_equal && self.name == other.name;
     }
 }
 
 impl fmt::Debug for PublicMaid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "PublicMaid {{ public_keys:({:?}, {:?}), maid_signature:{:?}, owner:{:?}, signature:{:?}, name: {:?} }}", self.public_keys.0 .0.to_vec(), self.public_keys.1 .0.to_vec(), 
+        write!(f, "PublicMaid {{ public_keys:({:?}, {:?}), maid_signature:{:?}, owner:{:?}, signature:{:?}, name: {:?} }}", self.public_keys.0 .0.to_vec(), self.public_keys.1 .0.to_vec(),
         	self.maid_signature.0.to_vec(), self.owner, self.signature.0.to_vec(), self.name)
     }
 }
@@ -116,7 +117,7 @@ impl fmt::Debug for PublicMaid {
 impl Random for PublicMaid {
 	fn generate_random() -> PublicMaid {
         let (sign_pub_key, _) = crypto::sign::gen_keypair();
-        let (asym_pub_key, _) = crypto::asymmetricbox::gen_keypair();        
+        let (asym_pub_key, _) = crypto::asymmetricbox::gen_keypair();
         let mut maid_signature_arr: [u8; 64] = unsafe { mem::uninitialized() };
         let mut signature_arr: [u8; 64] = unsafe { mem::uninitialized() };
         for i in 0..64 {
@@ -172,30 +173,40 @@ impl PublicMaid {
 
 impl Encodable for PublicMaid {
 	fn encode<E: Encoder>(&self, e: &mut E)->Result<(), E::Error> {
-		let (crypto::sign::PublicKey(pub_sign_vec), crypto::asymmetricbox::PublicKey(pub_asym_vec)) = self.public_keys;
-		let crypto::sign::Signature(maid_signature) = self.maid_signature;
-		let crypto::sign::Signature(signature) = self.signature;
+		let (crypto::sign::PublicKey(ref pub_sign_vec), crypto::asymmetricbox::PublicKey(pub_asym_vec)) = self.public_keys;
+		let crypto::sign::Signature(ref maid_signature) = self.maid_signature;
+		let crypto::sign::Signature(ref signature) = self.signature;
 		CborTagEncode::new(5483_001, &(
-			array_as_vector(&pub_sign_vec),
-			array_as_vector(&pub_asym_vec),
-			array_as_vector(&maid_signature),
+			pub_sign_vec.as_ref(),
+			pub_asym_vec.as_ref(),
+			maid_signature.as_ref(),
 			&self.owner,
-			array_as_vector(&signature),
+			signature.as_ref(),
 			&self.name)).encode(e)
 	}
 }
 
 impl Decodable for PublicMaid {
-	fn decode<D: Decoder>(d: &mut D)-> Result<PublicMaid, D::Error> {
-		try!(d.read_u64());
-		let(pub_sign_vec, pub_asym_vec, maid_signature, owner, signature, name) = try!(Decodable::decode(d));
-		let pub_keys = (crypto::sign::PublicKey(vector_as_u8_32_array(pub_sign_vec)),
-				crypto::asymmetricbox::PublicKey(vector_as_u8_32_array(pub_asym_vec)));
-		let parsed_maid_signature = crypto::sign::Signature(vector_as_u8_64_array(maid_signature));
-		let parsed_signature = crypto::sign::Signature(vector_as_u8_64_array(signature));
+    fn decode<D: Decoder>(d: &mut D)-> Result<PublicMaid, D::Error> {
+	try!(d.read_u64());
+	let (pub_sign_vec, pub_asym_vec, maid_signature_vec, owner, signature_vec, name) : (Vec<u8>, Vec<u8>, Vec<u8>, NameType, Vec<u8>, NameType) = try!(Decodable::decode(d));
 
-		Ok(PublicMaid::new(pub_keys, parsed_maid_signature, owner, parsed_signature, name))
-	}
+        let pub_sign_arr = convert_to_array!(pub_sign_vec, crypto::sign::PUBLICKEYBYTES);
+        let pub_asym_arr = convert_to_array!(pub_asym_vec, crypto::asymmetricbox::PUBLICKEYBYTES);
+        let maid_signature_arr = convert_to_array!(maid_signature_vec, crypto::sign::SIGNATUREBYTES);
+        let signature_arr = convert_to_array!(signature_vec, crypto::sign::SIGNATUREBYTES);
+
+        if pub_sign_arr.is_none() || pub_asym_arr.is_none() || maid_signature_arr.is_none() || signature_arr.is_none() {
+            return Err(d.error("Bad PublicMaid size"));
+        }
+
+	let pub_keys = (crypto::sign::PublicKey(pub_sign_arr.unwrap()),
+			crypto::asymmetricbox::PublicKey(pub_asym_arr.unwrap()));
+	let parsed_maid_signature = crypto::sign::Signature(maid_signature_arr.unwrap());
+	let parsed_signature = crypto::sign::Signature(signature_arr.unwrap());
+
+	Ok(PublicMaid::new(pub_keys, parsed_maid_signature, owner, parsed_signature, name))
+    }
 }
 
 #[test]

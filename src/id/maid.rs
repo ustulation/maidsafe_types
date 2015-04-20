@@ -1,32 +1,28 @@
-/*  Copyright 2014 MaidSafe.net limited
-
-    This MaidSafe Software is licensed to you under (1) the MaidSafe.net Commercial License,
-    version 1.0 or later, or (2) The General Public License (GPL), version 3, depending on which
-    licence you accepted on initial access to the Software (the "Licences").
-
-    By contributing code to the MaidSafe Software, or to this project generally, you agree to be
-    bound by the terms of the MaidSafe Contributor Agreement, version 1.0, found in the root
-    directory of this project at LICENSE, COPYING and CONTRIBUTOR respectively and also
-    available at: http://www.maidsafe.net/licenses
-
-    Unless required by applicable law or agreed to in writing, the MaidSafe Software distributed
-    under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS
-    OF ANY KIND, either express or implied.
-
-    See the Licences for the specific language governing permissions and limitations relating to
-    use of the MaidSafe Software.                                                                 */
-extern crate rustc_serialize;
-extern crate sodiumoxide;
-extern crate cbor;
-extern crate rand;
+// Copyright 2015 MaidSafe.net limited
+//
+// This MaidSafe Software is licensed to you under (1) the MaidSafe.net Commercial License, version
+// 1.0 or later, or (2) The General Public License (GPL), version 3, depending on which licence you
+// accepted on initial access to the Software (the "Licences").
+//
+// By contributing code to the MaidSafe Software, or to this project generally, you agree to be
+// bound by the terms of the MaidSafe Contributor Agreement, version 1.0, found in the root
+// directory of this project at LICENSE, COPYING and CONTRIBUTOR respectively and also available at
+// http://maidsafe.net/licenses
+//
+// Unless required by applicable law or agreed to in writing, the MaidSafe Software distributed
+// under the GPL Licence is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.
+//
+// See the Licences for the specific language governing permissions and limitations relating to use
+// of the MaidSafe Software.
 
 use cbor::CborTagEncode;
+use cbor;
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use sodiumoxide::crypto;
 use helper::*;
-use common::NameType;
-use traits::RoutingTrait;
 use Random;
+use rand;
 use std::cmp;
 use std::fmt;
 
@@ -34,45 +30,22 @@ use std::fmt;
 ///
 /// #Examples
 /// ```
-/// extern crate sodiumoxide;
-/// extern crate maidsafe_types;
-///
-/// // Generating sign and asymmetricbox keypairs,
-/// let (pub_sign_key, sec_sign_key) = sodiumoxide::crypto::sign::gen_keypair(); // returns (PublicKey, SecretKey)
-/// let (pub_asym_key, sec_asym_key) = sodiumoxide::crypto::asymmetricbox::gen_keypair();
+/// use maidsafe_types::Random;
 ///
 /// // Creating new Maid
-/// let maid  = maidsafe_types::id::maid::Maid::new((pub_sign_key, pub_asym_key),
-///                     (sec_sign_key, sec_asym_key),
-///                     maidsafe_types::NameType([6u8; 64]));
+/// let maid  = maidsafe_types::id::maid::Maid::generate_random();
 ///
 /// // getting Maid::public_keys
 /// let &(pub_sign, pub_asym) = maid.get_public_keys();
 ///
-/// // getting Maid::secret_keys
-/// let &(sec_sign, sec_asym) = maid.get_public_keys();
-///
-/// // getting Maid::name
-/// let name: &maidsafe_types::NameType = maid.get_name();
 /// ```
 #[derive(Clone)]
 pub struct Maid {
     public_keys: (crypto::sign::PublicKey, crypto::asymmetricbox::PublicKey),
-    secret_keys: (crypto::sign::SecretKey, crypto::asymmetricbox::SecretKey),
-    name: NameType,
+    secret_keys: (crypto::sign::SecretKey, crypto::asymmetricbox::SecretKey)
 }
 
 impl Maid {
-    pub fn new(public_keys: (crypto::sign::PublicKey, crypto::asymmetricbox::PublicKey),
-               secret_keys: (crypto::sign::SecretKey, crypto::asymmetricbox::SecretKey),
-               name_type: NameType) -> Maid {
-        Maid {
-            public_keys: public_keys,
-            secret_keys: secret_keys,
-            name: name_type
-        }
-    }
-
     pub fn get_public_keys(&self) -> &(crypto::sign::PublicKey, crypto::asymmetricbox::PublicKey){
         &self.public_keys
     }
@@ -94,10 +67,6 @@ impl Maid {
         from : &crypto::asymmetricbox::PublicKey) -> Result<Vec<u8>, ::CryptoError> {
         return crypto::asymmetricbox::open(&data, &nonce, &from, &self.secret_keys.1).ok_or(::CryptoError::Unknown);
     }
-
-    pub fn get_name(&self) -> &NameType {
-        &self.name
-    }
 }
 
 impl Random for Maid {
@@ -107,45 +76,23 @@ impl Random for Maid {
 
         Maid {
             public_keys: (sign_keys.0, asym_keys.0),
-            secret_keys: (sign_keys.1, asym_keys.1),
-            name: NameType::generate_random(),
+            secret_keys: (sign_keys.1, asym_keys.1)
         }
     }
 }
 
 impl cmp::PartialEq for Maid {
     fn eq(&self, other: &Maid) -> bool {
-        self.public_keys.0 .0.iter().chain(self.public_keys.1 .0.iter().chain(self.secret_keys.0 .0.iter().chain(self.secret_keys.1 .0.iter()))).zip(
-            other.public_keys.0 .0.iter().chain(other.public_keys.1 .0.iter().chain(other.secret_keys.0 .0.iter().chain(other.secret_keys.1 .0.iter())))).all(|a| a.0 == a.1) &&
-            self.name == other.name
+        // Private keys are mathematically linked, so just check public keys
+        let public0_equal =  slice_equal(&self.public_keys.0 .0, &other.public_keys.0 .0);
+        let public1_equal = slice_equal(&self.public_keys.1 .0, &other.public_keys.1 .0);
+        return public0_equal && public1_equal;
     }
 }
 
 impl fmt::Debug for Maid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Maid {{ public_keys: ({:?}, {:?}), secret_keys: ({:?}, {:?}), name: {:?} }}", self.public_keys.0 .0.to_vec(), self.public_keys.1 .0.to_vec(),
-        self.secret_keys.0 .0.to_vec(), self.secret_keys.1 .0.to_vec(), self.name)
-    }
-}
-
-
-impl RoutingTrait for Maid {
-    fn get_name(&self) -> NameType {
-        let sign_arr = &(&self.public_keys.0).0;
-        let asym_arr = &(&self.public_keys.1).0;
-
-        let mut arr_combined = [0u8; 64 * 2];
-
-        for i in 0..sign_arr.len() {
-            arr_combined[i] = sign_arr[i];
-        }
-        for i in 0..asym_arr.len() {
-            arr_combined[64 + i] = asym_arr[i];
-        }
-
-        let digest = crypto::hash::sha512::hash(&arr_combined);
-
-        NameType(digest.0)
+        write!(f, "Maid {{ public_keys: ({:?}, {:?}) }}", self.public_keys.0 .0.to_vec(), self.public_keys.1 .0.to_vec())
     }
 
     fn get_type_id(&self) -> Option<u64> {
@@ -159,31 +106,41 @@ impl Encodable for Maid {
         let (crypto::sign::SecretKey(sec_sign_vec), crypto::asymmetricbox::SecretKey(sec_asym_vec)) = self.secret_keys;
 
         CborTagEncode::new(5483_001, &(
-            array_as_vector(&pub_sign_vec),
-            array_as_vector(&pub_asym_vec),
-            array_as_vector(&sec_sign_vec),
-            array_as_vector(&sec_asym_vec),
-            &self.name)).encode(e)
+            pub_sign_vec.as_ref(),
+            pub_asym_vec.as_ref(),
+            sec_sign_vec.as_ref(),
+            sec_asym_vec.as_ref())).encode(e)
     }
 }
 
 impl Decodable for Maid {
     fn decode<D: Decoder>(d: &mut D)-> Result<Maid, D::Error> {
         try!(d.read_u64());
-        let(pub_sign_vec, pub_asym_vec, sec_sign_vec, sec_asym_vec, name) = try!(Decodable::decode(d));
-        let pub_keys = (crypto::sign::PublicKey(vector_as_u8_32_array(pub_sign_vec)),
-                        crypto::asymmetricbox::PublicKey(vector_as_u8_32_array(pub_asym_vec)));
-        let sec_keys = (crypto::sign::SecretKey(vector_as_u8_64_array(sec_sign_vec)),
-                        crypto::asymmetricbox::SecretKey(vector_as_u8_32_array(sec_asym_vec)));
-        Ok(Maid::new(pub_keys, sec_keys, name))
+        let (pub_sign_vec, pub_asym_vec, sec_sign_vec, sec_asym_vec) : (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) = try!(Decodable::decode(d));
+
+        let pub_sign_arr = convert_to_array!(pub_sign_vec, crypto::sign::PUBLICKEYBYTES);
+        let pub_asym_arr = convert_to_array!(pub_asym_vec, crypto::asymmetricbox::PUBLICKEYBYTES);
+        let sec_sign_arr = convert_to_array!(sec_sign_vec, crypto::sign::SECRETKEYBYTES);
+        let sec_asym_arr = convert_to_array!(sec_asym_vec, crypto::asymmetricbox::SECRETKEYBYTES);
+
+        if pub_sign_arr.is_none() || pub_asym_arr.is_none() || sec_sign_arr.is_none() || sec_asym_arr.is_none() {
+            return Err(d.error("Bad Maid size"));
+        }
+
+        let pub_keys = (crypto::sign::PublicKey(pub_sign_arr.unwrap()),
+                        crypto::asymmetricbox::PublicKey(pub_asym_arr.unwrap()));
+        let sec_keys = (crypto::sign::SecretKey(sec_sign_arr.unwrap()),
+                        crypto::asymmetricbox::SecretKey(sec_asym_arr.unwrap()));
+        Ok(Maid{ public_keys: pub_keys, secret_keys: sec_keys })
     }
 }
 
 #[cfg(test)]
-use self::rand::Rng;
+use rand::Rng;
 
 #[test]
 fn serialisation_maid() {
+    use helper::*;
     let obj_before = Maid::generate_random();
 
     let mut e = cbor::Encoder::from_memory();
@@ -196,12 +153,10 @@ fn serialisation_maid() {
     let &(crypto::sign::PublicKey(pub_sign_arr_after), crypto::asymmetricbox::PublicKey(pub_asym_arr_after)) = obj_after.get_public_keys();
     let &(crypto::sign::SecretKey(sec_sign_arr_before), crypto::asymmetricbox::SecretKey(sec_asym_arr_before)) = &obj_before.secret_keys;
     let &(crypto::sign::SecretKey(sec_sign_arr_after), crypto::asymmetricbox::SecretKey(sec_asym_arr_after)) = &obj_after.secret_keys;
-    let (&NameType(name_before), &NameType(name_after)) = (obj_before.get_name(), obj_after.get_name());
 
-    assert!(compare_u8_array(&name_before, &name_after));
     assert_eq!(pub_sign_arr_before, pub_sign_arr_after);
     assert_eq!(pub_asym_arr_before, pub_asym_arr_after);
-    assert!(compare_u8_array(&sec_sign_arr_before, &sec_sign_arr_after));
+    assert!(slice_equal(&sec_sign_arr_before, &sec_sign_arr_after));
     assert_eq!(sec_asym_arr_before, sec_asym_arr_after);
 }
 
